@@ -748,9 +748,9 @@ class MusicTest(unittest.TestCase):
 
 class ReleaseVersionTest(unittest.TestCase):
     def test_first_wipeout_release(self):
-        self.assertEqual(launcher.VERSION, '0.2.22')
-        self.assertGreater(launcher.version_tuple('windows-v0.2.23'), launcher.version_tuple(launcher.VERSION))
-        self.assertGreater(launcher.version_tuple(launcher.VERSION), launcher.version_tuple('windows-v0.2.21'))
+        self.assertEqual(launcher.VERSION, '0.2.23')
+        self.assertGreater(launcher.version_tuple('windows-v0.2.24'), launcher.version_tuple(launcher.VERSION))
+        self.assertGreater(launcher.version_tuple(launcher.VERSION), launcher.version_tuple('windows-v0.2.22'))
 
     def test_update_check_is_on_by_default(self):
         # A new key: the old 'check_updates' was saved off in everyone's settings.
@@ -773,6 +773,16 @@ class ReleaseVersionTest(unittest.TestCase):
             self.assertEqual(app.ui_calls.qsize(), offered)
             while not app.ui_calls.empty():
                 app.ui_calls.get()
+
+    def test_update_without_its_zip_asks_again(self):
+        # A release offered before its zip was built: UPDATE NOW asks GitHub again and says to
+        # wait, instead of opening the release page (#61).
+        app = types.SimpleNamespace(process=None, messagebox=mock.Mock(), update_progress=mock.Mock())
+        with mock.patch.object(launcher, 'FROZEN', True), mock.patch.object(launcher, 'open_url') as opened,                 mock.patch.object(launcher, 'latest_release', return_value=('9.9.9', None, 'p', '')):
+            launcher.Launcher.install_update(app, '9.9.9', None, 'p')
+        opened.assert_not_called()
+        app.messagebox.showinfo.assert_called_once()
+        app.update_progress.assert_not_called()
 
     def test_whats_new_is_cut_from_the_release_note(self):
         body = "## What's new\n\n**Pop-up.** Click `UPDATE NOW`.\n- one\n\n## All features\n\n- everything\n"
