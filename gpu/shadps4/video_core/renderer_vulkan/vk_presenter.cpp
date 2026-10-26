@@ -627,6 +627,11 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     } else {
         auto& image = texture_cache.GetImage(image_id);
         if (frame_dump) {
+            std::printf("Frame dump: display %llx %ux%u pitch %u tile %u alt %u bank %u\n",
+                        static_cast<unsigned long long>(image.info.guest_address),
+                        image.info.size.width, image.info.size.height, image.info.pitch,
+                        u32(image.info.tile_mode), unsigned(image.info.alt_tile),
+                        unsigned(image.info.bank_swizzle));
             runtime.Transit(&image, vk::ImageLayout::eTransferSrcOptimal,
                             vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
             runtime.FlushBarriers();
@@ -636,8 +641,12 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         }
         image_view = *image.FindView(view_info).image_view;
         image_size = vk::Extent2D{image.info.size.width, image.info.size.height};
+        // gow3: the FSR/RCAS pass reads it in a compute shader. With the fragment stage alone the
+        // pass could start before the game's last draws (its 2D layer): AMD cards lost the menus
+        // in Borderless and Fullscreen, where the window matches the image and RCAS runs (#45).
         runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
-                        vk::PipelineStageFlagBits2::eFragmentShader,
+                        vk::PipelineStageFlagBits2::eFragmentShader |
+                            vk::PipelineStageFlagBits2::eComputeShader,
                         vk::AccessFlagBits2::eShaderRead);
         runtime.FlushBarriers();
     }

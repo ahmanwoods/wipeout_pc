@@ -170,7 +170,13 @@ u64 PS4_SYSV_ABI sceKernelReadTsc() { return runtime_read_tsc(); }
 u64 PS4_SYSV_ABI sceKernelGetProcessTime() { return runtime_process_time_us(); }
 u64 PS4_SYSV_ABI sceKernelGetProcessTimeCounter() { return runtime_process_time_counter(); }
 u64 PS4_SYSV_ABI sceKernelGetProcessTimeCounterFrequency() { return 1'000'000'000; }
-s32 PS4_SYSV_ABI sceKernelIsNeoMode() { return 0; } // base PS4
+s32 PS4_SYSV_ABI sceKernelIsNeoMode() {
+    static const bool neo = [] {
+        const char* value = std::getenv("GOW3_NEO");
+        return value && *value == '1';
+    }();
+    return neo;
+}
 s32 PS4_SYSV_ABI sceKernelGetCompiledSdkVersion(s32* ver) {
     if (!ver) return ORBIS_KERNEL_ERROR_EINVAL;
     *ver = s32(g_sdk_version);
@@ -374,6 +380,22 @@ extern "C" void gow3gpu_movie_picture(void) {
 
 extern "C" void gow3gpu_request_screenshot(void) {
     VideoCore::RequestScreenshot(VideoCore::ScreenshotRequest::GameOnly);
+}
+
+extern "C" void gow3gpu_notice(const char* utf8) {
+    Gow3Overlay::ShowNotice(utf8, 5000);
+}
+
+extern "C" int gow3gpu_music_on(void) {
+    return Gow3Settings::Get().music.load(std::memory_order_relaxed);
+}
+
+extern "C" int gow3gpu_music_shuffle(void) {
+    return Gow3Settings::Get().music_shuffle.load(std::memory_order_relaxed);
+}
+
+extern "C" int gow3gpu_music_volume(void) {
+    return Gow3Settings::Get().music_volume.load(std::memory_order_relaxed);
 }
 
 extern "C" int gow3gpu_mouse_prompt_distance(void) {

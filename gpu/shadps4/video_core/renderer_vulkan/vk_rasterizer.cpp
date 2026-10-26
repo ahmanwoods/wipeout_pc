@@ -247,6 +247,29 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
         image.binding.is_target = 1u;
     }
 
+    // gow3: WipEout draws the scene into a display buffer, then its HUD over it, laid out for
+    // 16:9. On a wider buffer the HUD draws keep 16:9 in the middle instead of stretching.
+    // ponytail: the first draw into a new display buffer is taken as the scene; flips must
+    // rotate buffers (a buffer drawn twice in a row would center its second scene draw).
+    static const bool hud_16x9 = [] {
+        const char* value = std::getenv("GOW3_HUD_16X9");
+        return value && value[0] == '1';
+    }();
+    hud_x = {1.0f, 0.0f};
+    if (hud_16x9 && cb_descs[0].first &&
+        FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
+        const VAddr address = regs.color_buffers[0].Address();
+        if (address != hud_buffer) {
+            hud_buffer = address;
+            hud_draws = 0;
+        }
+        const auto& size = texture_cache.GetImage(cb_descs[0].first).info.size;
+        const float inner = float(size.height) * 16.0f / 9.0f;
+        if (hud_draws++ > 0 && inner + 1.0f < float(size.width)) {
+            hud_x = {inner / float(size.width), (float(size.width) - inner) * 0.5f};
+        }
+    }
+
     if (GetEffectiveDepthStencilState(regs).needs_attachment) {
         const auto htile_address = regs.depth_htile_data_base.GetAddress();
         const auto& hint = DbExtent();
@@ -269,6 +292,26 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     gbuffer_draw = camera_motion->Enabled() && std::popcount(key.mrt_mask) >= 5 && db_desc.first;
     if (gbuffer_draw) {
         camera_motion->OnGBufferPass(db_desc.first);
+    }
+    // wipeout (GOW3_GAME_MOTION=1, game profile): the main scene pass draws R11G11B10 color,
+    // linear depth (color1) and the game's own motion vectors (color2, R16G16F), all full size,
+    // with the scene depth. It gives the upscaler depth, color and motion; no camera is needed.
+    static const bool game_motion = [] {
+        const char* env = std::getenv("GOW3_GAME_MOTION");
+        return env && env[0] == '1';
+    }();
+    if (game_motion && upscaler->Enabled() && std::popcount(key.mrt_mask) == 3 &&
+        db_desc.first && cb_descs[0].first && cb_descs[2].first) {
+        const auto& color = texture_cache.GetImage(cb_descs[0].first);
+        const auto& motion = texture_cache.GetImage(cb_descs[2].first);
+        const auto& depth = texture_cache.GetImage(db_desc.first);
+        if (color.info.pixel_format == vk::Format::eB10G11R11UfloatPack32 &&
+            motion.info.pixel_format == vk::Format::eR16G16Sfloat &&
+            color.info.size == depth.info.size && motion.info.size == depth.info.size) {
+            camera_motion->OnGBufferPass(db_desc.first);
+            camera_motion->OnGameMotion(cb_descs[2].first);
+            upscaler->OnSceneColor(cb_descs[0].first);
+        }
     }
     if (upscaler->Enabled() && cb_descs[0].first) {
         upscaler->OnColorTarget(cb_descs[0].first);
@@ -1018,6 +1061,9 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
 
     PrepareRenderState(pipeline);
     if (upscaler->Enabled() && std::popcount(pipeline->GetGraphicsKey().mrt_mask) == 1) {
+        // wipeout: before the first pass reading the finished scene (a color target means a
+        // pixel shader).
+        upscaler->OnPixelShader(pipeline->GetStage(Shader::SwStage::Fragment).pgm_hash);
         const auto& viewport = Regs().viewports[0];
         upscaler->OnDraw(pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash,
                          cb_descs[0].first, db_desc.first,
@@ -1052,8 +1098,8 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     }
 
     // gow3: screen-space (clip disabled) draws into the upscaler's output-size images.
-    push_data.xscale *= target_scale[0];
-    push_data.xoffset *= target_scale[0];
+    push_data.xscale *= hud_x[0] * target_scale[0];
+    push_data.xoffset = (push_data.xoffset * hud_x[0] + hud_x[1]) * target_scale[0];
     push_data.yscale *= target_scale[1];
     push_data.yoffset *= target_scale[1];
     if (motion_draw && motion_geometry) {
@@ -1273,8 +1319,8 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     }
 
     // gow3: screen-space (clip disabled) draws into the upscaler's output-size images.
-    push_data.xscale *= target_scale[0];
-    push_data.xoffset *= target_scale[0];
+    push_data.xscale *= hud_x[0] * target_scale[0];
+    push_data.xoffset = (push_data.xoffset * hud_x[0] + hud_x[1]) * target_scale[0];
     push_data.yscale *= target_scale[1];
     push_data.yoffset *= target_scale[1];
     pipeline->BindResources(set_writes, push_data);
@@ -1988,6 +2034,14 @@ bool Rasterizer::IsComputeMetaClear(const Pipeline* pipeline) {
         for (const auto& desc : info.buffers) {
             const VAddr address = desc.GetSharp(info).base_address;
             if (!desc.IsSpecial() && desc.is_written && texture_cache.ClearMeta(address)) {
+                // gow3: the target reads as cleared from now on, also when the game only samples
+                // it and draws nothing into it before. Clearing it at the next bind only left
+                // WipEout's ship select ship in the menus after it (#58).
+                if (const auto [image_id, clear_value] = texture_cache.MetaTarget(address);
+                    image_id) {
+                    auto& image = texture_cache.GetImage(image_id);
+                    runtime.ClearImage(&image, {.extent = image.info.resources}, clear_value);
+                }
                 // Assume all slices were updates
                 LOG_TRACE(Render_Vulkan, "Metadata update skipped");
                 return true;
@@ -2903,6 +2957,9 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         attachment.image_layout = image->backing->state.layout;
         attachment.clear_value = clear_value.color.uint32;
         attachment.is_clear = is_clear;
+        if (is_clear) {
+            texture_cache.SetMetaClearValue(col_buf.CmaskAddress(), clear_value);
+        }
 
         if (reduced) {
             const auto target = scene_targets->Attachment(image_id, desc.view_info);
@@ -3390,9 +3447,9 @@ void Rasterizer::UpdateViewportScissorState() const {
 
             // gow3: sub-pixel jitter of scene geometry for the temporal upscaler; the same
             // shift as jittering the projection.
-            viewport.x = (xoffset - xscale) * target_scale[0] + draw_jitter[0];
+            viewport.x = ((xoffset - xscale) * hud_x[0] + hud_x[1]) * target_scale[0] + draw_jitter[0];
             viewport.y = (yoffset - yscale) * target_scale[1] + draw_jitter[1];
-            viewport.width = xscale * 2.0f * target_scale[0];
+            viewport.width = xscale * 2.0f * hud_x[0] * target_scale[0];
             viewport.height = yscale * 2.0f * target_scale[1];
         }
 
@@ -3408,6 +3465,12 @@ void Rasterizer::UpdateViewportScissorState() const {
                                               regs.viewport_scissors[i].bottom_right_x);
             vp_scsr.bottom_right_y = std::min(AmdGpu::Scissor::Clamp(vp_scsr.bottom_right_y),
                                               regs.viewport_scissors[i].bottom_right_y);
+        }
+        if (hud_x[0] != 1.0f) {
+            const auto shift = [&](s32 v) { return s16(std::lround(float(v) * hud_x[0] + hud_x[1])); };
+            const s32 x0 = AmdGpu::Scissor::Clamp(vp_scsr.top_left_x);
+            vp_scsr.bottom_right_x = shift(x0 + s32(vp_scsr.GetWidth()));
+            vp_scsr.top_left_x = shift(x0);
         }
         if (target_scale[0] != 1.0f || target_scale[1] != 1.0f) {
             const auto scale = [](s32 v, float f) { return s32(std::lround(float(v) * f)); };

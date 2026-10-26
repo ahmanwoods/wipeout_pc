@@ -280,6 +280,10 @@ def main():
         # image readbacks fix its corrupted textures.
         if env.get('GOW3_EXPERIMENTAL_UPSCALER') != '1':
             env.setdefault('GOW3_UPSCALER', 'none')
+        else:
+            # FSR 3.1 / DLAA smooth the edges instead of the game's multisampling; with both on, a
+            # race showed another image in the upper-left quarter (NVIDIA, where it is on by default).
+            env['GOW3_NO_MSAA'] = '1'
         env.setdefault('GOW3_READBACK_LINEAR', '1')
         patch_xml = profile[1] if profile else None
         if profile and mod_patch_files:
@@ -332,13 +336,15 @@ def main():
         # can need more than 16 GB of RAM, and the game then closes when the page file cannot grow.
         import guest_memory
         if warning := guest_memory.memory_warning(env.get('GOW3_DMEM_MB'), guest_memory.physical_memory_mb(),
-                                                  env.get('GOW3_STREAM_MEMORY', 'cached')):
+                                                  env.get('GOW3_STREAM_MEMORY', 'cached'),
+                                                  neo=env.get('GOW3_NEO', '').startswith('1')):
             print(warning, flush=True)
 
         # The in-game restart starts this script again once this process is gone.
         # GPU caches (shaders, pipelines) beside the saves; read before main(), so set here.
         user_dir = Path(env.get('GOW3_USER_DIR', data / 'user')).resolve()
         user_dir.mkdir(parents=True, exist_ok=True)
+        (user_dir / 'music').mkdir(exist_ok=True)  # custom soundtrack (src/runtime_music.c)
         env.setdefault('GOW3_GPU_USER_DIR', str(user_dir))
         from save_backup import backup
         try:
@@ -364,7 +370,9 @@ def main():
                 presence = discord_presence.Presence(pid=process.pid) if discord_presence else None
             except (OSError, RuntimeError):
                 print('Discord presence unavailable; the game will continue', flush=True)
-            return process.wait()
+            status = process.wait()
+            print(f'Game process exited: {status} (0x{status & 0xffffffff:08X})', flush=True)
+            return status
         finally:
             if presence:
                 presence.close()

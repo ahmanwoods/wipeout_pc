@@ -5,8 +5,10 @@ style of [bbport](https://github.com/deadinside28/bloodborne_pc): the game's ori
 code runs directly on the PC's processor, a runtime replaces the PS4 system libraries, and the
 graphics are translated to Vulkan by the shadPS4 video core. There is no CPU emulator.
 
-> **Status: early development. Menus and races (HD and 2048) play above 60 FPS.**
+> **Status: playable, in active development. Menus and races (HD and 2048) play above 60 FPS.**
 > See [Progress](#progress).
+
+For contributors: [build and debug on Windows](docs/windows-debug.md), or optionally [edit from WSL2](docs/windows-debug-wsl.md). Debugging scripts and tests are versioned; GDB and the compiler are installed as development dependencies.
 
 ## Download and play (Windows)
 
@@ -22,6 +24,20 @@ Requirements: Windows 10 or 11 (64-bit), a CPU with AVX, a GPU with Vulkan 1.3. 
 > This project is not affiliated with Sony Interactive Entertainment, XDev, Clever Beans or EPOS
 > Game Studios. WipEout is a trademark of Sony Interactive Entertainment.
 
+## Help make it better
+
+- ⭐ **Star the repo** if you like it. It helps other players find the port.
+- 🐞 **Found a bug?** [Open an issue](https://github.com/AbdelmoumenDeghbouche/wipeout_pc/issues/new/choose)
+  with your GPU, driver and `user/last_run.log`. Every report helps me fix the game, and I read
+  all of them.
+- 💡 **Want something?** Feature requests are welcome too. Open an issue and tell me what you
+  would like.
+- 🛠️ **Can test or code?** Reports from AMD, Intel, Linux and Steam Deck players help a lot, and
+  pull requests are welcome.
+
+Known problems are in the [open issues](https://github.com/AbdelmoumenDeghbouche/wipeout_pc/issues).
+Thanks to everyone who has played, tested and reported so far!
+
 ## Progress
 
 | Step | State |
@@ -34,13 +50,14 @@ Requirements: Windows 10 or 11 (64-bit), a CPU with AVX, a GPU with Vulkan 1.3. 
 | Game speed | Done: the game runs on real time at any frame rate |
 | Frame rate above 60 FPS | Done: up to 240 FPS, set by the frame rate limit (110–150 FPS in 2048 races on an RTX 4070 Laptop) |
 | Graphics: Metro Park terrain | Fixed (shader recompiler, #5) |
-| Render resolutions: 2560x1080, 5120x2160, native 4K without checkerboard | Done (`patches/WipEout_Omega_Collection.xml`, #2). HUD stays 16:9 |
+| Render resolutions: native 1080p, 2560x1440, 3840x2160 (4K), 2560x1080, 3440x1440, 5120x2160 | Done: pick one in the in-game **Render resolution** menu (Insert key) (`patches/WipEout_Omega_Collection.xml`, #2, #48). The HUD stays 16:9 in the middle of wider screens. 4K and 5120x2160 need a lot of video memory: HD races at 4K can run out on 8 GB |
 | HDR | Done; the darker picture when RCAS runs is fixed, waiting for a test (#4) |
 | Sound: music and effects (Audio3d) | Done; the effects are new, please report anything that sounds wrong |
+| Your own music (custom soundtrack) | Done: see [Your own music](#your-own-music) (#47) |
 | Launcher and settings | Done (`launcher/gow3_launcher_win.py`) |
 | Windows package (zip) | Done (`packaging/windows/package.sh`, Actions > Windows zip) |
 | Linux | Builds from source; no package yet |
-| PS4 Pro mode | Not yet: the shadPS4 texture cache stops on an image overlap |
+| PS4 Pro mode | Experimental (`GOW3_NEO=1`): loads a race with a correct picture since v0.2.3 (#32, #33); not tested further |
 | PSVR mode | Not planned for now (#7) |
 | Every game and event type (HD, HD Fury, 2048) | Not all tested yet |
 
@@ -51,12 +68,28 @@ The game times itself with the processor's time stamp counter (`rdtsc`), so the 
 it the real counter and its measured frequency (`src/runtime_kernel.c`). Its speed then does
 not depend on the frame rate.
 
+## Your own music
+
+Play your own songs instead of the game's music, as on a PS4 playing your own music. The game's
+sound effects stay.
+
+1. In the launcher, open the **Music** page. Put your songs (MP3, OGG, FLAC, WAV, M4A, ...) in the
+   music folder: `user\music` next to `WipEout.exe`, or any folder you choose there. Subfolders
+   count too. The page lists the songs it finds.
+2. Click **PLAY**. Your songs play in menus and races, shuffled. The song name shows in the lower
+   right corner when a song starts.
+3. In the game, press Insert (or R3 + L2) and open the **Music** tab: pick a song, go to the
+   previous or next one, switch shuffle or your music off, and set the **Music volume**.
+
+Each song is leveled, so loud and quiet songs sound alike; Music volume 100% is about as loud as
+the game's own music. Without the launcher, `GOW3_MUSIC_DIR` points to another folder.
+
 ## Supported game versions
 
 | Title ID | Region | Version | State |
 |---|---|---|---|
 | CUSA07671 | US | 01.00 + update 01.07 | Development target |
-| CUSA05670 | EU | — | Untested |
+| CUSA05670 | EU | — | Playable (five races tested, #19) |
 
 The base game and the update are merged into one folder (the update's files replace the base
 game's). One `eboot.bin` runs all three games: WipEout 2048, WipEout HD and WipEout Fury.
@@ -98,6 +131,10 @@ From fake PKGs of your own dump (base game and update):
 python scripts/pkg_extract.py <base.pkg> D:\games\CUSA07671
 python scripts/pkg_extract.py <update.pkg> D:\games\CUSA07671-patch
 ```
+
+Extraction first reads the PKG to calculate its SHA-256. A retry keeps only files recorded as
+complete for that exact package whose size and modification time have not changed. Older
+extractions without this record are extracted again once, even when file sizes match.
 
 Then move the update's files over the base game folder, or pass the update folder with
 `GOW3_PATCH_DIR`. A folder dumped with GoldHEN works the same way.
@@ -168,7 +205,9 @@ Windows port of deadinside28's original:
   format and the symbol names (`tools/aerolib.inl`).
 
 Contributors to this port: **d4g** (render resolution patches, the Metro Park terrain fix),
-**benhaslett** (game clock measurements, Linux build fix) and **iannitram** (PS4 FPU state).
+**carlosmarind** (save and heap fixes, PS4 Pro mode work), **Extremenis** (the overexposed SDR
+fix), **ahmanwoods** (Audio3d IDs), **alhockly** (EU version test), **benhaslett** (game clock
+measurements, Linux build fix) and **iannitram** (PS4 FPU state).
 
 Also used: [LibAtrac9](https://github.com/Thealexbarney/LibAtrac9), [FFmpeg](https://ffmpeg.org),
 [SDL3](https://github.com/libsdl-org/SDL), [Dear ImGui](https://github.com/ocornut/imgui),

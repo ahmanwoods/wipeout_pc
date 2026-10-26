@@ -20,7 +20,7 @@ MINGW*|MSYS*)
             git -C gpu/third_party/fsr-vulkan apply "$PWD/$patch"
         fi
     done
-    cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DGOW3_PGO=off \
+    cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE="${GOW3_BUILD_TYPE:-RelWithDebInfo}" -DGOW3_PGO=off \
         -DGOW3_LTO="${GOW3_LTO:-OFF}" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ >/dev/null
     echo "GPU library and loader: LTO ${GOW3_LTO:-OFF}"
     if ! ninja -C out/gpu gow3-probe gow3-gpu-capabilities gow3-play > out/gpu-build.log 2>&1; then
@@ -49,8 +49,8 @@ if ! { command -v pkg-config >/dev/null && pkg-config --exists vulkan sdl3 && co
     fi
     echo 'Need pkg-config with vulkan and sdl3, cmake and ninja (see shell.nix).' >&2; exit 1
 fi
-read -r -a includes <<< "$(pkg-config --cflags vulkan sdl3 libavcodec libavutil libswscale)"
-read -r -a libraries <<< "$(pkg-config --libs vulkan sdl3 libavcodec libavutil libswscale)"
+read -r -a includes <<< "$(pkg-config --cflags vulkan sdl3 libavformat libavcodec libavutil libswscale libswresample)"
+read -r -a libraries <<< "$(pkg-config --libs vulkan sdl3 libavformat libavcodec libavutil libswscale libswresample)"
 # GPU library (shadPS4 video core + drivers), built by CMake into out/gpu/libgow3gpu.so.
 # GOW3_PGO: generate (instrumented build that writes pgo/ while the game runs), use, off.
 # Default: use the profile in pgo/ when there is one. GOW3_LTO=OFF disables link-time optimization.
@@ -100,6 +100,12 @@ if [[ ${1:-} == --test ]]; then
     out/runtime-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_file_mods.c -o out/file-mods-test
     out/file-mods-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_mutex.c -o out/mutex-test
+    python3 -B -m unittest discover -s tests -p test_mutex.py
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_savedata.c src/runtime_file.c -o out/savedata-test
+    python3 -B -m unittest discover -s tests -p test_savedata.py
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_savedata_mounts.c src/runtime_file.c -o out/savedata-mount-test
+    python3 -B -m unittest discover -s tests -p test_savedata_mounts.py
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_sema.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/sema-test
     out/sema-test
     "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
@@ -108,7 +114,7 @@ if [[ ${1:-} == --test ]]; then
     out/mp3-test tests/data/sine.mp3
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc tests/test_videodec.c "${libraries[@]}" -o out/videodec-test
     out/videodec-test tests/data/tiny.h264
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_json.c src/runtime_json.c -o out/json-test
+    "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_json.c src/runtime_json.c -o out/json-test
     out/json-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_services.c -o out/services-test
     out/services-test

@@ -42,6 +42,7 @@ int main() {
     // An unpatched engine steps 1/60 s per frame: presenting faster speeds the game up.
     assert(G::PresentLimit(120, 60) == 60 && G::PresentLimit(240, 120) == 120 && G::PresentLimit(240, 240) == 240);
     assert(G::PresentLimit(0, 60) == 0 && G::PresentLimit(30, 60) == 30);  // 0: paced by vblank
+    assert(G::PresentLimit(0, 240) == 240);  // Unlimited at a 240 FPS engine (WipEout) is not held at the 60 Hz vblank
 
     const char* path = "graphics-settings-test.ini";
     {
@@ -100,6 +101,24 @@ int main() {
         _putenv_s("GOW3_EXTRA_RESOLUTIONS", "");  // the mod is off: its resolution is unknown, so native
         Gow3Settings::Load();
         assert(v.render_resolution == 0 && G::ResolutionNames().size() == 22);
+    }
+
+    {
+        // GOW3_ALLOWED_RESOLUTIONS keeps only the listed built-ins (WipEout profile); extras still follow,
+        // repeated or unknown names are ignored, and an all-unknown list still shows native.
+        _putenv_s("GOW3_ALLOWED_RESOLUTIONS", "native;2560x1080;5120x2160");
+        _putenv_s("GOW3_EXTRA_RESOLUTIONS", "3440x1440");
+        const auto filtered = G::ResolutionNames();
+        assert(filtered.size() == 4 && filtered[0] == "native" && filtered[1] == "2560x1080" &&
+               filtered[2] == "5120x2160" && filtered[3] == "3440x1440");
+        // Labels go by name: the second entry of the shorter list is 2560x1080, not 480p (#23).
+        assert(std::string_view(G::ResolutionLabel(filtered[1])) == "2560 × 1080 · 21:9 (beta)" &&
+               std::string_view(G::ResolutionLabel(filtered[2])) == "5120 × 2160 · 21:9 (beta)" &&
+               std::string_view(G::ResolutionLabel(filtered[3])) == "3440 × 1440 · 21:9 (beta)");
+        _putenv_s("GOW3_ALLOWED_RESOLUTIONS", "nope");
+        assert(G::ResolutionNames().front() == "native" && G::ResolutionNames().size() == 2);
+        _putenv_s("GOW3_ALLOWED_RESOLUTIONS", "");
+        _putenv_s("GOW3_EXTRA_RESOLUTIONS", "");
     }
 
     {

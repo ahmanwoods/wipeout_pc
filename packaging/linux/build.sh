@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds dist/gow3-x86_64.AppImage from the Linux build (run `bash build.sh` in the repo root first).
+# Builds dist/wipeout-x86_64.AppImage from the Linux build (run `bash build.sh` in the repo root first).
 # Libraries are bundled with their dependencies, except the ones that must come from the host
 # (glibc, Vulkan loader and drivers, X11/Wayland, GL). The Tk launcher is frozen with PyInstaller, so
 # players need no Python. Needs: ldd, patchelf, curl (appimagetool), python-pyinstaller, tk, pillow, iced-x86.
@@ -22,8 +22,8 @@ mkdir -p "$share/launcher"
 icon=launcher/gow3.png
 [[ -f packaging/linux/gow3.png ]] && icon=packaging/linux/gow3.png
 install -m644 "$icon" "$share/launcher/gow3.png"
-install -m644 launcher/Cinzel-Black.ttf "$share/launcher/Cinzel-Black.ttf"
-install -m644 launcher/OFL-Cinzel.txt "$share/launcher/OFL-Cinzel.txt"
+install -m644 launcher/RussoOne-Regular.ttf "$share/launcher/RussoOne-Regular.ttf"
+install -m644 launcher/OFL-RussoOne.txt "$share/launcher/OFL-RussoOne.txt"
 
 # The launcher also runs run.py (--run) and the preparation scripts (--script) itself, as on
 # Windows: the standard modules those scripts import come along as hidden imports.
@@ -92,6 +92,6 @@ if [[ -z $tool ]]; then
 fi
 mkdir -p dist
 # Written aside and moved over: replacing a running AppImage in place fails ("Text file busy").
-ARCH=x86_64 "$tool" --appimage-extract-and-run "$appdir" dist/gow3-x86_64.AppImage.new
-mv -f dist/gow3-x86_64.AppImage.new dist/gow3-x86_64.AppImage
-ls -lh dist/gow3-x86_64.AppImage
+ARCH=x86_64 "$tool" --appimage-extract-and-run "$appdir" dist/wipeout-x86_64.AppImage.new
+mv -f dist/wipeout-x86_64.AppImage.new dist/wipeout-x86_64.AppImage
+ls -lh dist/wipeout-x86_64.AppImage
