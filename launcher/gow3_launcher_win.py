@@ -61,7 +61,7 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 NEW_GROUP = {} if WINDOWS else {'start_new_session': True}
 UI_FONT, MONO_FONT, SERIF_FONT = 'Segoe UI', 'Consolas', 'Georgia'
 # This build; GitHub release tags are windows-v<VERSION>.
-VERSION = '0.2.23'
+VERSION = '0.2.27'
 RELEASES_API = 'https://api.github.com/repos/AbdelmoumenDeghbouche/wipeout_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/AbdelmoumenDeghbouche/wipeout_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'gow3-update'
@@ -92,6 +92,27 @@ def attach_stdio():
             except OSError:
                 stream = None
         setattr(sys, name, stream or open(os.devnull, 'w'))
+
+
+class QuietStream:
+    """Writes to `stream` and drops what the system refuses: a front-end such as QuiverLauncher may
+    close the pipe that holds the output, and print() then raised OSError 22 (#63)."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, text):
+        try:
+            return self.stream.write(text)
+        except OSError:
+            return len(text)
+
+    def flush(self):
+        with contextlib.suppress(OSError):
+            self.stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
 
 
 def load_mods():
@@ -125,6 +146,7 @@ def run_role(argv):
             stream.reconfigure(encoding='utf-8', line_buffering=True)
         except (AttributeError, ValueError):
             pass
+    sys.stdout, sys.stderr = QuietStream(sys.stdout), QuietStream(sys.stderr)
     if argv[0] == '--script':
         path, sys.argv = argv[1], argv[1:]
     else:
@@ -408,7 +430,7 @@ PAGE_REFRESH = {'home': ('refresh_status',), 'game': ('refresh_game_patches',), 
 # The custom soundtrack's file types, as src/runtime_music.c.
 MUSIC_TYPES = ('.mp3', '.ogg', '.oga', '.opus', '.flac', '.wav', '.m4a', '.aac', '.wma')
 UI_SCALES = [('auto', ('Auto',)), ('1', ('1x',)), ('2', ('2x',))]
-APP_DEFAULTS = {'ui_language': 'en', 'ui_scale': 'auto', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA07671') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False, 'ps4_pro': False, 'cheat_events': False, 'cheat_rank': False, 'cheat_ships': False,
+APP_DEFAULTS = {'ui_language': 'en', 'ui_scale': 'auto', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA07671') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False, 'ps4_pro': False, 'cheat_events': False, 'cheat_rank': False, 'cheat_ships': False, 'cheat_van_uber': False, 'cheat_vr_ships': False,
                 'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'desktop_integration': True, 'user_dir': '',
                 'music_dir': '', 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
                 'hdr': False, 'draw_pipe': '', 'readbacks': '', 'no_msaa': '', 'stream_memory': 'cached',
@@ -701,7 +723,13 @@ CHEATS = (('cheat_events', 'Cheat - Unlock all HD and Fury events', 'Unlock all 
           ('cheat_ships', 'Cheat - Unlock all ships', 'Unlock all ships (HD, HD Fury and 2048)',
            ('Every ship and livery is open: the ones that need medals, team loyalty, play time or a campaign '
             'grid, and the 2048 ships that need a rank, a 2048 event or a prototype challenge. Not the VR '
-            'versions, nor the Tigron and Van-Uber DLC teams. Off: they need your own progress again.')))
+            'versions, nor the Tigron and Van-Uber DLC teams. Off: they need your own progress again.')),
+          ('cheat_van_uber', 'Cheat - Van Uber team (owned DLC)', 'Van Über team (owned DLC)',
+           ('For a copy whose PSN account owns the Van Über team DLC: the game sees it as installed, offline. '
+            "Off: the team needs the console's entitlement again.")),
+          ('cheat_vr_ships', 'Cheat - VR ships outside VR', 'VR ship liveries outside VR',
+           ('The VR HD and VR Fury liveries can be picked on a normal screen too, once they are unlocked. '
+            'Off: they need PlayStation VR mode again.')))
 UI_LANGUAGES = gow3_lang.LANGUAGE_NAMES
 
 def fsr4_folder():

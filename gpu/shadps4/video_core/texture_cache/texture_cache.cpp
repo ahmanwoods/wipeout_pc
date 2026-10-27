@@ -227,10 +227,24 @@ void TextureCache::ProcessDownloadImages() {
         ReportImageCreates();
     }
     if (deferred_readbacks) {
+        // gow3: images are queued for download by the thread that runs this (draw recording),
+        // so with none queued no page is protected below and there is nothing to wait for.
+        bool any_downloads = true;
+        if (!Gow3Toggle::Disabled(Gow3Toggle::EmptyDownloadNoWait)) {
+            std::scoped_lock lock{download_images_mutex};
+            any_downloads = !download_images.empty();
+        }
         // Upload workers must finish reading RAM before these pages become inaccessible.
-        scheduler.WaitHostCopies();
+        if (any_downloads) {
+            Gow3Stats::download_waits.fetch_add(1, std::memory_order_relaxed);
+            scheduler.WaitHostCopies();
+        } else {
+            Gow3Stats::download_waits_skipped.fetch_add(1, std::memory_order_relaxed);
+        }
         std::scoped_lock readback_lock{readback_mutex};
         RetireReadbacks();
+        const bool deep_queue = !Gow3Toggle::Disabled(Gow3Toggle::DeepReadbackQueue);
+        pending_readbacks.SetMaxEntries(deep_queue ? 512 : 64);
         std::unique_lock lock{download_images_mutex};
         for (const ImageId image_id : download_images) {
             const auto& image = slot_images[image_id];
@@ -239,8 +253,16 @@ void TextureCache::ProcessDownloadImages() {
                 image.info.size.depth * image.info.resources.layers * (image.info.num_bits / 8);
             if (!pending_readbacks.CanFit(size)) {
                 ++readbacks_waited;
-                scheduler.Finish();
-                RetireReadbacks();
+                if (deep_queue) {
+                    // Only the oldest copies have to be done: the GPU keeps the newer work.
+                    while (!pending_readbacks.CanFit(size) && !pending_readbacks.Empty()) {
+                        scheduler.Wait(pending_readbacks.OldestTick());
+                        RetireReadbacks();
+                    }
+                } else {
+                    scheduler.Finish();
+                    RetireReadbacks();
+                }
             }
             if (auto copy = RecordImageDownload(image_id)) {
                 if (!pending_readbacks.CanFit(copy->size)) {
@@ -1661,6 +1683,7 @@ void TextureCache::GarbageCollectImages() {
             }
         }
     }
+    runtime.GetStagingPool().SetLowMemory(total_used_memory >= pressure_gc_memory);
     if (total_used_memory < trigger_gc_memory) {
         return;
     }
@@ -1681,26 +1704,27 @@ void TextureCache::GarbageCollectImages() {
         if (num_deletions == 0) {
             return true;
         }
-        --num_deletions;
         auto& image = slot_images[image_id];
-        ResolveReadbacks(image.info.guest_address, image.info.guest_size, true,
-                         ReadbackSource::CacheCleanup);
         const bool download = image.SafeToDownload();
         const bool tiled = image.info.IsTiled();
-        if (tiled && download) {
-            // This is a workaround for now. We can't handle non-linear image downloads.
-            return false;
-        }
-        if (download && !pressured) {
-            return false;
-        }
+        // This is a workaround for now. We can't handle non-linear image downloads.
+        const bool tiled_download = tiled && download;
         // gow3: a small picture the GPU drew that cannot be written back (its pages are marked
         // CPU-dirty) may be state the game keeps from frame to frame, like its auto exposure
         // chain (50x25 .. 3x1). Freed, it came back from guest memory as zeros: the race or the
         // menu stayed black after a race at high resolutions (#27, #42). They are tiny.
-        if (True(image.flags & ImageFlagBits::GpuModified) && !download && image.info.guest_size <= (2u << 20)) {
+        const bool gpu_state = True(image.flags & ImageFlagBits::GpuModified) && !download &&
+                               image.info.guest_size <= (2u << 20);
+        if (tiled_download || (download && !pressured) || gpu_state) {
+            // gow3: a kept image goes to the back of the list and is not a deletion. At the front
+            // and counted, ~60 old render targets used up every pass: nothing else was freed,
+            // and low-VRAM cards ran out of memory after a few races (#72, #16).
+            lru_cache.Touch(image.lru_id, gc_tick);
             return false;
         }
+        --num_deletions;
+        ResolveReadbacks(image.info.guest_address, image.info.guest_size, true,
+                         ReadbackSource::CacheCleanup);
         if (download) {
             // gow3: synchronously, while the image still protects its pages. A deferred
             // write-back landed after FreeImage had unprotected them, over whatever the game
